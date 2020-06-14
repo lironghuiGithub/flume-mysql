@@ -1,0 +1,49 @@
+{
+  "example": "30|50081|127.0.0.1|http://www.baidu.com|2020-01-01 21:54:40",
+  "dataSourceName": "lrh_db",
+  "tableName": "ad_click_day${array[0]}[yyyyMMdd]",
+  "logType": "split",
+  "batchSize": 500,
+  "columns": [
+    {
+      "colunmName": "s_pid",
+      "jdbcType": "int",
+      "index": 0,
+      "length": 20,
+      "nullable": false
+    },
+    {
+      "colunmName": "s_appid",
+      "dufaultValue": "0",
+      "jdbcType": "int",
+      "index": 1,
+      "length": 20
+    },
+    {
+      "colunmName": "s_click_ip",
+      "dufaultValue": "-",
+      "jdbcType": "varchar",
+      "index": 2,
+      "length": 20
+    },
+    {
+      "colunmName": "s_click_url",
+      "dufaultValue": "-",
+      "jdbcType": "varchar",
+      "index": 3,
+      "length": 200
+    },
+    {
+      "colunmName": "d_click",
+      "jdbcType": "datetime",
+      "dateFormat": "yyyy-MM-dd HH:mm:ss",
+      "dufaultValue": "now()",
+      "index": 4
+    },
+    {
+      "colunmName": "d_create",
+      "jdbcType": "datetime",
+      "userNow": true
+    }
+  ]
+}

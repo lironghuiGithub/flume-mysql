@@ -1,0 +1,27 @@
+{
+  "dataSourceName": "lrh_db",
+  "tableName": "sysConfig",
+  "logType": "json",
+  "batchSize": 500,
+  "columns": [
+    {
+      "colunmName": "s_key",
+      "jdbcType": "varchar",
+      "jsonKey": "sKey",
+      "length": 20
+    },
+    {
+      "colunmName": "s_value",
+      "dufaultValue": "",
+      "jdbcType": "varchar",
+      "jsonKey": "sValue",
+      "length": 20
+    },
+    {
+      "colunmName": "d_create",
+      "jdbcType": "datetime",
+      "length": 20,
+      "userNow": true
+    }
+  ]
+}
