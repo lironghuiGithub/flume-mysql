@@ -5,11 +5,11 @@ import java.util.regex.Pattern;
 
 public class PatternUtil {
     //${aa}
-    private static final Pattern freemarker$ = Pattern.compile("\\$\\{\\S+\\}");
+    public static final Pattern freemarker$ = Pattern.compile("\\$\\{\\S+\\}");
     //[yyyyMMdd]  [yyyyMM]   [yyyy_MM]
-    private static final Pattern dateFormat = Pattern.compile("\\[(yyyy\\S+?)\\]");
+    public static final Pattern dateFormat = Pattern.compile("\\[(yyyy\\S+?)\\]");
     //数字包含0
-    private static final Pattern number_with_zero = Pattern.compile("[0-9]+");
+    public static final Pattern number_with_zero = Pattern.compile("[0-9]+");
 
     /**
      * 判断是否包含${xxx}

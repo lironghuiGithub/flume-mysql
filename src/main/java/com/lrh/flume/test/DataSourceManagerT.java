@@ -1,5 +1,6 @@
 package com.lrh.flume.test;
 
+import com.lrh.flume.datasource.ConnectionProxy;
 import com.lrh.flume.datasource.DataSourceManager;
 
 import java.sql.Connection;
@@ -37,7 +38,7 @@ public class DataSourceManagerT {
                 @Override
                 public void run() {
                     try {
-                        Connection connection = DataSourceManager.getConnection(datasourceName);
+                        ConnectionProxy connection = DataSourceManager.getConnection(datasourceName);
                         if (connection != null) {
                             connection.close();
                         }

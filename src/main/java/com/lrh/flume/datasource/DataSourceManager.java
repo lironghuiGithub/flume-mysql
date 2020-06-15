@@ -63,13 +63,13 @@ public class DataSourceManager {
      * @return
      * @throws SQLException
      */
-    public static Connection getConnection(String dataSourceName) throws SQLException {
+    public static ConnectionProxy getConnection(String dataSourceName) throws SQLException {
         DataSource dataSource = DataSourceReloader.getInstance().getDataSource(dataSourceName);
         if (dataSource == null) {
             logger.error("dataSource not exists error datasourceName= {}", dataSourceName);
             throw new IllegalArgumentException("dataSource not exists error datasourceName=" + dataSourceName);
         }
-        return dataSource.getConnection();
+        return new ConnectionProxy(dataSource.getConnection());
     }
 
 }

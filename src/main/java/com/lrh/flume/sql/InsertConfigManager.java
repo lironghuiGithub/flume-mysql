@@ -37,7 +37,7 @@ public class InsertConfigManager {
         /***
          * 注册监听
          */
-        FileWatcher.register(rootFile.getAbsolutePath(), DataSourceReloader.getInstance());
+        FileWatcher.register(rootFile.getAbsolutePath(), InsertConfigReloader.getInstance());
     }
 
     /**

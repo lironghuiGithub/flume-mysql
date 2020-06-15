@@ -2,12 +2,15 @@ package com.lrh.flume.sink;
 
 import com.alibaba.fastjson.JSONObject;
 import com.google.common.base.Preconditions;
+import com.lrh.flume.datasource.ConnectionProxy;
 import com.lrh.flume.datasource.DataSourceManager;
 import com.lrh.flume.sql.InsertConfigManager;
 import com.lrh.flume.sql.model.InsertConfig;
 import com.lrh.flume.sql.model.InsertItem;
 import com.lrh.flume.util.DateUtil;
+import com.lrh.flume.util.NamedThreadFactory;
 import com.lrh.flume.util.PatternUtil;
+import com.zaxxer.hikari.HikariDataSource;
 import org.apache.flume.*;
 import org.apache.flume.conf.Configurable;
 import org.apache.flume.sink.AbstractSink;
@@ -21,7 +24,9 @@ import java.util.*;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.BiConsumer;
+import java.util.regex.Matcher;
 
 /**
  * 一个sink处理一个业务父类
@@ -37,16 +42,24 @@ abstract class BaseMysqlSink extends AbstractSink implements Configurable {
     protected String configName;
     //每个业务json对应一个配置文件，配置文件名称在json中的值
     protected int threadNum;
-
-    protected ExecutorService executorService;
-
+    //线程池数组 同一张表使用同一个线程池共享一个connection
+    protected ExecutorService[] executorServiceArray;
+    //每个库每个表使用一个数据库链接
+    protected Map<String, ConnectionProxy> connectionCache;
+    //创建connection的锁
+    protected Object LOCK = new Object();
 
     @Override
     public synchronized void start() {
         super.start();
         DataSourceManager.start();
         InsertConfigManager.start();
-        executorService = Executors.newFixedThreadPool(threadNum);
+        connectionCache = new HashMap<>();
+        executorServiceArray = new ExecutorService[threadNum];
+        for (int i = 0; i < threadNum; i++) {
+            //单线程线程池避免多线程并发使用 jdbc connection
+            executorServiceArray[i] = Executors.newSingleThreadExecutor(new NamedThreadFactory(this.getClass().getSimpleName()));
+        }
     }
 
     @Override
@@ -68,8 +81,12 @@ abstract class BaseMysqlSink extends AbstractSink implements Configurable {
         try {
             //不需要分库的情况，提前获取一次connecttion 用于检测数据库链接是否可用，防止数据库挂掉数据丢失
             if (!insertConfig.isDataSourceNeedFreemarkerParse() && !insertConfig.isDataSourceNeedDateParse()) {
-                Connection connection = DataSourceManager.getConnection(insertConfig.getDataSourceName());
-                if (connection != null) {
+                ConnectionProxy connection = DataSourceManager.getConnection(insertConfig.getDataSourceName());
+                //不分库分表直接存入缓存 减少一次取connection的次数
+                if (!insertConfig.isTableNeedFreemarkerParse() && !insertConfig.isTableNeedDateParse()) {
+                    connectionCache.put(buildConnectionKey(insertConfig.getDataSourceName(), insertConfig.getTableName()), connection);
+                } else {
+                    //分库或者分表情况这个connection直接返回链接池
                     connection.close();
                 }
             }
@@ -77,7 +94,6 @@ abstract class BaseMysqlSink extends AbstractSink implements Configurable {
                 Event event = channel.take();
                 if (event != null) {//对事件进行处理
                     String line = new String(event.getBody());
-                    logger.info("line:"+line);
                     if (line == null || line.isEmpty()) {
                         continue;
                     }
@@ -96,15 +112,22 @@ abstract class BaseMysqlSink extends AbstractSink implements Configurable {
             /**
              * 未达到批量数量的数据入库
              */
-            insertIntoMysqlAsync(insertConfig, insertItemCache, insertFutureList);
+            insertIntoMysql(insertConfig, insertItemCache, insertFutureList);
             //虽然插入是并发插入 单独flume每个执行批次不能并发插入 防止内存中太多InsertItem 导致内存溢出
             if (insertFutureList.size() > 0) {
                 CompletableFuture.allOf(insertFutureList.toArray(new CompletableFuture[insertFutureList.size()])).join();
             }
-            insertItemCache.clear();
         } catch (Exception e) {
             logger.error("", e);
         } finally {
+            insertFutureList.clear();
+            insertItemCache.clear();
+            //每次入库完成必须归还connection
+            if (!connectionCache.isEmpty()) {
+                for (ConnectionProxy connection : connectionCache.values()) {
+                    connection.close();
+                }
+            }
             //异常数据直接抛弃不做回滚操作  分库分表的做法部分库链接不上没法全部回滚
             try {
                 transaction.commit();
@@ -159,7 +182,7 @@ abstract class BaseMysqlSink extends AbstractSink implements Configurable {
      * @param insertItemCache
      * @param insertFutureList
      */
-    private void insertIntoMysqlAsync(InsertConfig insertConfig, Map<String, List<InsertItem>> insertItemCache, List<CompletableFuture> insertFutureList) {
+    private void insertIntoMysql(InsertConfig insertConfig, Map<String, List<InsertItem>> insertItemCache, List<CompletableFuture> insertFutureList) {
         for (List<InsertItem> insertItemList : insertItemCache.values()) {
             if (insertItemList.size() > 0) {
                 List<InsertItem> insertList = insertItemList;
@@ -176,7 +199,24 @@ abstract class BaseMysqlSink extends AbstractSink implements Configurable {
      * @return
      */
     private CompletableFuture insertIntoMysqlAsync(List<InsertItem> insertItemList, InsertConfig insertConfig) {
-        CompletableFuture future = CompletableFuture.runAsync(new InsertIntoMysqlRun(insertItemList, insertConfig)).whenComplete(new BiConsumer<Void, Throwable>() {
+        InsertItem firstItem = insertItemList.get(0);
+        String realDataSourceName = firstItem.getDataSourceName();
+        if (insertConfig.isDataSourceNeedDateParse()) {
+            realDataSourceName = parseDateTime(realDataSourceName);
+        }
+        String realTableName = firstItem.getTableName();
+        if (insertConfig.isTableNeedDateParse()) {
+            realTableName = parseDateTime(realTableName);
+        }
+        ConnectionProxy connection;
+        try {
+            connection = createConnection(realDataSourceName, realTableName);
+        } catch (SQLException e) {
+            logger.error("create Connection error");
+            return null;
+        }
+        int hash = (int) connection.getConnectionId() % threadNum;
+        CompletableFuture future = CompletableFuture.runAsync(new InsertIntoMysqlRun(insertItemList, insertConfig, realTableName, connection), executorServiceArray[hash]).whenComplete(new BiConsumer<Void, Throwable>() {
             @Override
             public void accept(Void aVoid, Throwable throwable) {
                 if (throwable != null) {
@@ -194,75 +234,47 @@ abstract class BaseMysqlSink extends AbstractSink implements Configurable {
      * 插入数据库采用并发插入默认解决 sink性能赶不上channel导致积压数据问题
      */
     class InsertIntoMysqlRun implements Runnable {
-        List<InsertItem> insertItemList;
-        InsertConfig insertConfig;
+        private List<InsertItem> insertItemList;
+        private InsertConfig insertConfig;
+        private String realTableName;
+        private ConnectionProxy connection;
 
-        public InsertIntoMysqlRun(List<InsertItem> insertItemList, InsertConfig insertConfig) {
+        public InsertIntoMysqlRun(List<InsertItem> insertItemList, InsertConfig insertConfig, String realTableName, ConnectionProxy connectionProxy) {
             this.insertItemList = insertItemList;
             this.insertConfig = insertConfig;
+            this.realTableName = realTableName;
+            this.connection = connectionProxy;
         }
 
         @Override
         public void run() {
-            insertIntoMysql(insertItemList, insertConfig);
-        }
-    }
-
-    /**
-     * 真正插入操作
-     *
-     * @param insertItemList 需要插入的数据 Objec[]内由子类转化好 varchar Timestamp 等，外层只setObject
-     * @param insertConfig   sql配置
-     */
-    private void insertIntoMysql(List<InsertItem> insertItemList, InsertConfig insertConfig) {
-        if (insertItemList.size() < 0) {
-            return;
-        }
-        InsertItem firstItem = insertItemList.get(0);
-        String realDataSourceName = firstItem.getDataSourceName();
-        if (insertConfig.isDataSourceNeedDateParse()) {
-            realDataSourceName = parseDateTime(realDataSourceName);
-        }
-        String realTableName = firstItem.getTableName();
-        if (insertConfig.isTableNeedDateParse()) {
-            realTableName = parseDateTime(realTableName);
-        }
-        String insertSQL = buidInertSQL(insertItemList, insertConfig);
-        insertSQL = String.format(insertSQL, realTableName);
-
-        Connection connection = null;
-        PreparedStatement preparedStatement = null;
-        try {
-            connection = DataSourceManager.getConnection(realDataSourceName);
-            connection.setAutoCommit(false);
-            preparedStatement = connection.prepareStatement(insertSQL);
-            int index = 1;
-            for (InsertItem insertItem : insertItemList) {
-                Object[] insertValues = insertItem.getInsertValues();
-                for (int i = 0; i < insertValues.length; i++) {
-                    preparedStatement.setObject(index++, insertValues[i]);
+            PreparedStatement preparedStatement = null;
+            try {
+                String insertSQL = buidInertSQL(insertItemList, insertConfig);
+                insertSQL = String.format(insertSQL, realTableName);
+                connection.setAutoCommit(false);
+                preparedStatement = connection.prepareStatement(insertSQL);
+                int index = 1;
+                for (InsertItem insertItem : insertItemList) {
+                    Object[] insertValues = insertItem.getInsertValues();
+                    for (int i = 0; i < insertValues.length; i++) {
+                        preparedStatement.setObject(index++, insertValues[i]);
+                    }
                 }
-            }
-            preparedStatement.execute();
-            connection.commit();
-        } catch (SQLException e) {
-            logger.error("", e);
-        } finally {
-            if (preparedStatement != null) {
-                try {
-                    preparedStatement.close();
-                } catch (SQLException e) {
-                    logger.error("", e);
+                preparedStatement.execute();
+                connection.commit();
+            } catch (SQLException e) {
+                logger.error("", e);
+            } finally {
+                if (preparedStatement != null) {
+                    try {
+                        preparedStatement.close();
+                    } catch (SQLException e) {
+                        logger.error("", e);
+                    }
                 }
+                insertItemList.clear();
             }
-            if (connection != null) {
-                try {
-                    connection.close();
-                } catch (SQLException e) {
-                    logger.error("", e);
-                }
-            }
-            insertItemList.clear();
         }
     }
 
@@ -282,7 +294,7 @@ abstract class BaseMysqlSink extends AbstractSink implements Configurable {
             }
             sb.append(insertConfig.getInsertValues());
         }
-        logger.error("build sql {}", sb.toString());
+//        logger.error("build sql {}", sb.toString());
         return sb.toString();
     }
 
@@ -293,10 +305,48 @@ abstract class BaseMysqlSink extends AbstractSink implements Configurable {
      * @return
      */
     private String parseDateTime(String str) {
-        String dateFormat = PatternUtil.getDateFormat(str);
-        if (dateFormat == null || dateFormat.isEmpty()) {
-            return str;
+        Matcher matcher = PatternUtil.dateFormat.matcher(str);
+        if (matcher.find()) {
+            //[yyyyMMdd] -->20200615
+            return str.replace(matcher.group(0), DateUtil.format(new Date(), matcher.group(1)));
         }
-        return DateUtil.format(new Date(), str);
+        return str;
+    }
+
+    /**
+     * 库名`表名作为一个key共享一个connection
+     *
+     * @param datasourceName
+     * @param tableName
+     * @return
+     */
+    private String buildConnectionKey(String datasourceName, String tableName) {
+        return new StringBuilder().append(datasourceName).append("`").append(tableName).toString();
+    }
+
+    /**
+     * 库名`表名作为一个key共享一个connection
+     *
+     * @param datasourceName
+     * @param tableName
+     * @return
+     */
+    private ConnectionProxy createConnection(String datasourceName, String tableName) throws SQLException {
+        String connectionKey = buildConnectionKey(datasourceName, tableName);
+        ConnectionProxy connection = connectionCache.get(connectionKey);
+        if (connection != null) {
+            return connection;
+        }
+        //创建数据源上锁， 防止重复创建数据源
+        synchronized (LOCK) {
+            connection = connectionCache.get(connectionKey);
+            if (connection != null) {
+                return connection;
+            } else {
+                connection = DataSourceManager.getConnection(datasourceName);
+                connectionCache.put(connectionKey, connection);
+            }
+        }
+        return connection;
     }
 }
