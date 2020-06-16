@@ -55,9 +55,9 @@ public abstract class AbstractFileListener implements FileListener {
                 return isValid;
             }
         }
-        if (!isValid) {
-            logger.error("file is not valid path={},", path.toString());
-        }
+//        if (!isValid) {
+//            logger.error("file is not valid path={},", path.toString());
+//        }
         return isValid;
     }
 

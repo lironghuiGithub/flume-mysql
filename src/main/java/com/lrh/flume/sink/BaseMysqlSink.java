@@ -48,6 +48,9 @@ abstract class BaseMysqlSink extends AbstractSink implements Configurable {
     protected Map<String, ConnectionProxy> connectionCache;
     //创建connection的锁
     protected Object LOCK = new Object();
+    //每获取一次链接生产一个id 根据ID hash到线程池保证一个线程持有一个jdbc链接
+    // 保证单个实例持有一个idGneerate， 防止多个实例并发生成ID时导致单个实例的线程池分配不均匀
+    private AtomicLong IdGenerater = new AtomicLong();
 
     @Override
     public synchronized void start() {
@@ -81,10 +84,10 @@ abstract class BaseMysqlSink extends AbstractSink implements Configurable {
         try {
             //不需要分库的情况，提前获取一次connecttion 用于检测数据库链接是否可用，防止数据库挂掉数据丢失
             if (!insertConfig.isDataSourceNeedFreemarkerParse() && !insertConfig.isDataSourceNeedDateParse()) {
-                ConnectionProxy connection = DataSourceManager.getConnection(insertConfig.getDataSourceName());
+                Connection connection = DataSourceManager.getConnection(insertConfig.getDataSourceName());
                 //不分库分表直接存入缓存 减少一次取connection的次数
                 if (!insertConfig.isTableNeedFreemarkerParse() && !insertConfig.isTableNeedDateParse()) {
-                    connectionCache.put(buildConnectionKey(insertConfig.getDataSourceName(), insertConfig.getTableName()), connection);
+                    connectionCache.put(buildConnectionKey(insertConfig.getDataSourceName(), insertConfig.getTableName()), new ConnectionProxy(connection, IdGenerater.getAndIncrement()));
                 } else {
                     //分库或者分表情况这个connection直接返回链接池
                     connection.close();
@@ -333,20 +336,21 @@ abstract class BaseMysqlSink extends AbstractSink implements Configurable {
      */
     private ConnectionProxy createConnection(String datasourceName, String tableName) throws SQLException {
         String connectionKey = buildConnectionKey(datasourceName, tableName);
-        ConnectionProxy connection = connectionCache.get(connectionKey);
-        if (connection != null) {
-            return connection;
+        ConnectionProxy connectionProxy = connectionCache.get(connectionKey);
+        if (connectionProxy != null) {
+            return connectionProxy;
         }
         //创建数据源上锁， 防止重复创建数据源
         synchronized (LOCK) {
-            connection = connectionCache.get(connectionKey);
-            if (connection != null) {
-                return connection;
+            connectionProxy = connectionCache.get(connectionKey);
+            if (connectionProxy != null) {
+                return connectionProxy;
             } else {
-                connection = DataSourceManager.getConnection(datasourceName);
-                connectionCache.put(connectionKey, connection);
+                Connection connection = DataSourceManager.getConnection(datasourceName);
+                connectionProxy = new ConnectionProxy(connection, IdGenerater.getAndIncrement());
+                connectionCache.put(connectionKey, connectionProxy);
             }
         }
-        return connection;
+        return connectionProxy;
     }
 }

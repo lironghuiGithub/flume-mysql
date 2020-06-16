@@ -18,15 +18,14 @@ import java.util.concurrent.atomic.AtomicLong;
  */
 public class ConnectionProxy implements Closeable {
     protected final Logger logger = LoggerFactory.getLogger(this.getClass());
-    private static final AtomicLong IdGenerater = new AtomicLong();
     //真实的connection链接
     private Connection connection;
     //每次获取connection 生成一个id
     private long connectionId;
 
-    public ConnectionProxy(Connection connection) {
+    public ConnectionProxy(Connection connection,long connectionId) {
         this.connection = connection;
-        connectionId = IdGenerater.getAndIncrement();
+        this.connectionId =connectionId;
     }
 
     public Connection getConnection() {

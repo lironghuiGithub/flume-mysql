@@ -38,7 +38,7 @@ public class DataSourceManagerT {
                 @Override
                 public void run() {
                     try {
-                        ConnectionProxy connection = DataSourceManager.getConnection(datasourceName);
+                        Connection connection = DataSourceManager.getConnection(datasourceName);
                         if (connection != null) {
                             connection.close();
                         }

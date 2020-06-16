@@ -12,14 +12,15 @@ import java.time.format.DateTimeFormatter;
 
 /**
  * 解析日志内容成JDBC TYPE
- * preparedStatement.setTimestamp() ;-->Timestamp
+ * preparedStatement.setTimestamp() ;-->timestamp
  * preparedStatement.setInt();     -->int
  * preparedStatement.setString();  -->String
  */
 public class SqlUtil {
     PreparedStatement preparedStatement;
     //当前时间默认值
-    private static final String DEAULT_NOW_VALUE = "now()";
+    private static final String DATE_VALUE_NOW = "now()";
+    private static final String DATE_FORMAT_TIMESTAMP = "timestamp";
 
     public static Object converToMyqlType(String content, InsertColumnConfig columnConfig) {
         String validValue = content;
@@ -67,19 +68,37 @@ public class SqlUtil {
         } else if ("decimal".equalsIgnoreCase(jdbcType)) {
             return new BigDecimal(content);
         } else if ("datetime".equalsIgnoreCase(jdbcType)) {
-            //如果默认值是 “now()” 则取当前时间
-            if (DEAULT_NOW_VALUE.equalsIgnoreCase(content)) {
-                return Timestamp.from(Instant.now());
-            }
-            return Timestamp.from(LocalDateTime.parse(content, DateTimeFormatter.ofPattern(dateFormat)).atZone(ZoneId.systemDefault()).toInstant());
+            return buildTimestamp(content, dateFormat);
         } else if ("timestmp".equalsIgnoreCase(jdbcType)) {
-            if (DEAULT_NOW_VALUE.equalsIgnoreCase(content)) {
-                return Timestamp.from(Instant.now());
-            }
-            return Timestamp.from(LocalDateTime.parse(content, DateTimeFormatter.ofPattern(dateFormat)).atZone(ZoneId.systemDefault()).toInstant());
+            return buildTimestamp(content, dateFormat);
         }
         throw new IllegalArgumentException("UNSUPPORT JDBC TYPE " + jdbcType);
     }
 
+    /**
+     * 根据配置生产时间戳
+     *
+     * @param content
+     * @param dateFormat
+     * @return
+     */
+    private static Timestamp buildTimestamp(String content, String dateFormat) {
+        if (DATE_VALUE_NOW.equalsIgnoreCase(content)) { //“now()” 解析为当前时间
+            return Timestamp.from(Instant.now());
+        } else if (DATE_FORMAT_TIMESTAMP.equalsIgnoreCase(dateFormat)) { //解析时间戳 nginx时间格式特殊支持
+            if (content.indexOf(".") > 0) {//nginx $msc 为1592317599.569
+                content = content.replace(".", "");
+            }
+            return Timestamp.from(Instant.ofEpochMilli(Long.parseLong(content)));
+        } else {  //根据配置dateFormat解析时间
+            return Timestamp.from(LocalDateTime.parse(content, DateTimeFormatter.ofPattern(dateFormat)).atZone(ZoneId.systemDefault()).toInstant());
+        }
+    }
 
+    public static void main(String[] args) {
+        System.out.println(System.currentTimeMillis());
+        String content = "1592317599.569";
+        Timestamp timestamp = buildTimestamp(content, DATE_FORMAT_TIMESTAMP);
+        System.out.println(timestamp);
+    }
 }
