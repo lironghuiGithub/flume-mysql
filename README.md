@@ -2,29 +2,29 @@
 flume采集日志存入MySQL，支持分库分表，动态加载配置文件
 
 
-配置详解：
-resources：
-	datasource：	 --真实db配置，datasource名称会解析为文件名称 此例中 会解析为 db、db2、db3 三个数据源
-		db.properties  
-		db2.properties  
-		db3.properties  
+## 配置详解：
+### resources：
+	datasource：--真实db配置，datasource名称会解析为文件名称 此例中 会解析为 db、db2、db3 三个数据源  
+		db.properties    
+		db2.properties    
+		db3.properties    
 		
-	sql：	        --不同业务对应的SQL和日志配置
-		config1.json 
-		config2.json 
-		config3.json 
+	sql：--不同业务对应的SQL和日志配置  
+		config1.json  
+		config2.json   
+		config3.json   
 		
 		
 		
-sql配置文件详解：
-    //配置支持freemarker模板语言解析表名和数据源名称
-	//split模式会把分隔后的字符串数组以array为key作为模板参数，取值方式为${array[0]}，${array[1]}，${array[n]}，
-	//json模式直接转换json对像作为模板参数，取值方式${jsonkey1},${jsonkey2},${jsonkey2}
-	//日表月表等时间格式使用：[时间格式]这种方式，内部会替换成当前时间例[yyyyMMdd]会被解析成20200616
-	//表名和数据源名称可以根据不同数据解析到不同的数据源和不同表，内部已经实现根据配置分库分表 
-    //30|50081|127.0.0.1|http://www.baidu.com|2020-01-01 21:54:40" 以这个日志样例，这个例子中会把表名称解析为ad_click_day3020200616
+### sql配置文件详解：
+    //配置支持freemarker模板语言解析表名和数据源名称  
+    //split模式会把分隔后的字符串数组以array为key作为模板参数，取值方式为${array[0]}，${array[1]}，${array[n]}  
+    //json模式直接转换json对像作为模板参数，取值方式${jsonkey1},${jsonkey2},${jsonkey2}  
+    //日表月表等时间格式使用：[时间格式]这种方式，内部会替换成当前时间例[yyyyMMdd]会被解析成20200616  
+    //表名和数据源名称可以根据不同数据解析到不同的数据源和不同表，内部已经实现根据配置分库分表   
+    //30|50081|127.0.0.1|http://www.baidu.com|2020-01-01 21:54:40" 以这个日志样例，这个例子中会把表名称解析为ad_click_day3020200616  
 	
-	
+`
   {
   "example": "30|50081|127.0.0.1|http://www.baidu.com|2020-01-01 21:54:40",
   "dataSourceName": "lrh_db",
@@ -77,5 +77,6 @@ sql配置文件详解：
     }
   ]
 }
+`
   
   
